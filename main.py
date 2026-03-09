@@ -1,139 +1,156 @@
 from src.f1_data import get_race_telemetry, enable_cache, get_circuit_rotation, load_session, get_quali_telemetry, list_rounds, list_sprints
 from src.run_session import run_arcade_replay, launch_insights_menu
 from src.interfaces.qualifying import run_qualifying_replay
+from src.logger import logger
+from src.exceptions import SessionLoadError, TelemetryError
+from src.config import DEFAULT_YEAR, DEFAULT_ROUND, ensure_directories
 import sys
 from src.cli.race_selection import cli_load
 from src.gui.race_selection import RaceSelectionWindow
 from PySide6.QtWidgets import QApplication
 
 def main(year=None, round_number=None, playback_speed=1, session_type='R', visible_hud=True, ready_file=None, show_telemetry_viewer=True):
-  print(f"Loading F1 {year} Round {round_number} Session '{session_type}'")
-  session = load_session(year, round_number, session_type)
-
-  print(f"Loaded session: {session.event['EventName']} - {session.event['RoundNumber']} - {session_type}")
-
-  # Enable cache for fastf1
-  enable_cache()
-
-  if session_type == 'Q' or session_type == 'SQ':
-
-    # Get the drivers who participated and their lap times
-
-    qualifying_session_data = get_quali_telemetry(session, session_type=session_type)
-
-    # Run the arcade screen showing qualifying results
-
-    title = f"{session.event['EventName']} - {'Sprint Qualifying' if session_type == 'SQ' else 'Qualifying Results'}"
+  """Main entry point for F1 Race Replay."""
+  try:
+    ensure_directories()
+    logger.info(f"Loading F1 {year} Round {round_number} Session '{session_type}'")
     
-    run_qualifying_replay(
-      session=session,
-      data=qualifying_session_data,
-      title=title,
-      ready_file=ready_file,
-    )
+    session = load_session(year, round_number, session_type)
+    if session is None:
+      raise SessionLoadError(f"Failed to load session: {year} Round {round_number} {session_type}")
 
-  else:
+    logger.info(f"Loaded session: {session.event['EventName']} - {session.event['RoundNumber']} - {session_type}")
 
-    # Get the drivers who participated in the race
+    # Enable cache for fastf1
+    enable_cache()
 
-    race_telemetry = get_race_telemetry(session, session_type=session_type)
+    if session_type == 'Q' or session_type == 'SQ':
 
-    # Get example lap for track layout
-    # Qualifying lap preferred for DRS zones (fallback to fastest race lap (no DRS data))
-    example_lap = None
-    
-    try:
-        print("Attempting to load qualifying session for track layout...")
-        quali_session = load_session(year, round_number, 'Q')
-        if quali_session is not None and len(quali_session.laps) > 0:
-            fastest_quali = quali_session.laps.pick_fastest()
-            if fastest_quali is not None:
-                quali_telemetry = fastest_quali.get_telemetry()
-                if 'DRS' in quali_telemetry.columns:
-                    example_lap = quali_telemetry
-                    print(f"Using qualifying lap from driver {fastest_quali['Driver']} for DRS Zones")
-    except Exception as e:
-        print(f"Could not load qualifying session: {e}")
+      # Get the drivers who participated and their lap times
 
-    # fallback: Use fastest race lap
-    if example_lap is None:
-        fastest_lap = session.laps.pick_fastest()
-        if fastest_lap is not None:
-            example_lap = fastest_lap.get_telemetry()
-            print("Using fastest race lap (DRS detection may use speed-based fallback)")
-        else:
-            print("Error: No valid laps found in session")
-            return
+      qualifying_session_data = get_quali_telemetry(session, session_type=session_type)
 
-    drivers = session.drivers
+      # Run the arcade screen showing qualifying results
 
-    # Get circuit rotation
+      title = f"{session.event['EventName']} - {'Sprint Qualifying' if session_type == 'SQ' else 'Qualifying Results'}"
+      
+      run_qualifying_replay(
+        session=session,
+        data=qualifying_session_data,
+        title=title,
+        ready_file=ready_file,
+      )
 
-    circuit_rotation = get_circuit_rotation(session)
-    
-    # Prepare session info for display banner
-    session_info = {
-        'event_name': session.event.get('EventName', ''),
-        'circuit_name': session.event.get('Location', ''),  # Circuit location/name
-        'country': session.event.get('Country', ''),
-        'year': year,
-        'round': round_number,
-        'date': session.event.get('EventDate', '').strftime('%B %d, %Y') if session.event.get('EventDate') else '',
-        'total_laps': race_telemetry['total_laps'],
-        'circuit_length_m': float(example_lap["Distance"].max()) if example_lap is not None and "Distance" in example_lap else None,
-    }
+    else:
 
-    # Launch insights menu (always shown with replay)
-    launch_insights_menu()
-    print("Launching insights menu...")
+      # Get the drivers who participated in the race
 
-    # Run the arcade replay
+      race_telemetry = get_race_telemetry(session, session_type=session_type)
 
-    run_arcade_replay(
-      frames=race_telemetry['frames'],
-      track_statuses=race_telemetry['track_statuses'],
-      example_lap=example_lap,
-      drivers=drivers,
-      playback_speed=playback_speed,
-      driver_colors=race_telemetry['driver_colors'],
-      title=f"{session.event['EventName']} - {'Sprint' if session_type == 'S' else 'Race'}",
-      total_laps=race_telemetry['total_laps'],
-      circuit_rotation=circuit_rotation,
-      visible_hud=visible_hud,
-      ready_file=ready_file,
-      session_info=session_info,
-      session=session,
-      enable_telemetry=True # This is now permanently enabled to support the telemetry insights menu if the user decides to use it
-    )
+      # Get example lap for track layout
+      # Qualifying lap preferred for DRS zones (fallback to fastest race lap (no DRS data))
+      example_lap = None
+      
+      try:
+          logger.info("Attempting to load qualifying session for track layout...")
+          quali_session = load_session(year, round_number, 'Q')
+          if quali_session is not None and len(quali_session.laps) > 0:
+              fastest_quali = quali_session.laps.pick_fastest()
+              if fastest_quali is not None:
+                  quali_telemetry = fastest_quali.get_telemetry()
+                  if 'DRS' in quali_telemetry.columns:
+                      example_lap = quali_telemetry
+                      logger.info(f"Using qualifying lap from driver {fastest_quali['Driver']} for DRS Zones")
+      except Exception as e:
+          logger.warning(f"Could not load qualifying session: {e}")
+
+      # fallback: Use fastest race lap
+      if example_lap is None:
+          fastest_lap = session.laps.pick_fastest()
+          if fastest_lap is not None:
+              example_lap = fastest_lap.get_telemetry()
+              logger.info("Using fastest race lap (DRS detection may use speed-based fallback)")
+          else:
+              raise TelemetryError("No valid laps found in session")
+
+      drivers = session.drivers
+
+      # Get circuit rotation
+
+      circuit_rotation = get_circuit_rotation(session)
+      
+      # Prepare session info for display banner
+      session_info = {
+          'event_name': session.event.get('EventName', ''),
+          'circuit_name': session.event.get('Location', ''),  # Circuit location/name
+          'country': session.event.get('Country', ''),
+          'year': year,
+          'round': round_number,
+          'date': session.event.get('EventDate', '').strftime('%B %d, %Y') if session.event.get('EventDate') else '',
+          'total_laps': race_telemetry['total_laps'],
+          'circuit_length_m': float(example_lap["Distance"].max()) if example_lap is not None and "Distance" in example_lap else None,
+      }
+
+      # Launch insights menu (always shown with replay)
+      launch_insights_menu()
+      logger.info("Launching insights menu...")
+
+      # Run the arcade replay
+
+      run_arcade_replay(
+        frames=race_telemetry['frames'],
+        track_statuses=race_telemetry['track_statuses'],
+        example_lap=example_lap,
+        drivers=drivers,
+        playback_speed=playback_speed,
+        driver_colors=race_telemetry['driver_colors'],
+        title=f"{session.event['EventName']} - {'Sprint' if session_type == 'S' else 'Race'}",
+        total_laps=race_telemetry['total_laps'],
+        circuit_rotation=circuit_rotation,
+        visible_hud=visible_hud,
+        ready_file=ready_file,
+        session_info=session_info,
+        session=session,
+        enable_telemetry=True # This is now permanently enabled to support the telemetry insights menu if the user decides to use it
+      )
+  
+  except SessionLoadError as e:
+    logger.error(f"Session load failed: {e}")
+    sys.exit(1)
+  except TelemetryError as e:
+    logger.error(f"Telemetry error: {e}")
+    sys.exit(1)
+  except Exception as e:
+    logger.exception(f"Unexpected error: {e}")
+    sys.exit(1)
 
 if __name__ == "__main__":
 
   if "--cli" in sys.argv:
     # Run the CLI
-
     cli_load()
     sys.exit(0)
+
+  year = DEFAULT_YEAR
+  round_number = DEFAULT_ROUND
 
   if "--year" in sys.argv:
     year_index = sys.argv.index("--year") + 1
     year = int(sys.argv[year_index])
-  else:
-    year = 2025  # Default year
 
   if "--round" in sys.argv:
     round_index = sys.argv.index("--round") + 1
     round_number = int(sys.argv[round_index])
-  else:
-    round_number = 12  # Default round number
 
   if "--list-rounds" in sys.argv:
     list_rounds(year)
+    sys.exit(0)
   elif "--list-sprints" in sys.argv:
     list_sprints(year)
-  else:
-    playback_speed = 1
+    sys.exit(0)
 
   if "--viewer" in sys.argv:
+    playback_speed = 1
   
     visible_hud = True
     if "--no-hud" in sys.argv:
@@ -151,10 +168,13 @@ if __name__ == "__main__":
 
     main(year, round_number, playback_speed, session_type=session_type, visible_hud=visible_hud, ready_file=ready_file)
     sys.exit(0)
-
+  
   # Run the GUI
-
-  app = QApplication(sys.argv)
-  win = RaceSelectionWindow()
-  win.show()
-  sys.exit(app.exec())
+  try:
+    app = QApplication(sys.argv)
+    win = RaceSelectionWindow()
+    win.show()
+    sys.exit(app.exec())
+  except Exception as e:
+    logger.exception(f"GUI failed to start: {e}")
+    sys.exit(1)

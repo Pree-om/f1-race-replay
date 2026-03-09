@@ -12,3 +12,12 @@ computed_data/
 
 .DS_Store
 .idea
+
+# Logs
+*.log
+f1_replay.log
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
